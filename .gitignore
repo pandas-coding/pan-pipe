@@ -1,0 +1,11 @@
+# Cargo 构建产物
+/target
+
+# JS 参考实现克隆（开发期行为规范参考；pan-pipe 运行时/构建/测试均不依赖）
+/praxis/
+
+# GSD 工具的安装目录，与 pan-pipe 无关
+/.pi/gsd/
+
+# 备份文件
+*.bak
