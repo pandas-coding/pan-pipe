@@ -305,6 +305,16 @@ pub trait Adapter {
 - 所有 120 个单元测试通过，`cargo fmt` + `cargo clippy --all-targets --all-features -D warnings` 全绿。
 - **全部阶段完成**：Phase 0（脚手架）→ Phase 1（核心库）→ Phase 2（适配器框架+4适配器）→ Phase 3（五个命令）→ Phase 4（pi+codex新适配器）→ Phase 5（发布与打磨）。
 
+#### 2026-09-15 — Bugfix：status 误报适配器跳过的文件为 missing
+- **现象**：仅启用 `pi-coding-agent` 的项目运行 `pan-pipe status`，`praxis/conventions.md` 与 `praxis/reviewer-output-format.md` 被报为 `✗ (missing)`。
+- **根因**：`status.rs` 在 tool-destination 模式下，把「空 destinations」一律当作 legacy 条目，回退去检查源路径 `<root>/praxis/<name>`。但 `has_tool_destinations` 为真时 `enabled_tools` 必然非空，此时空 destinations 的真实含义是「所有已启用适配器都主动跳过了该文件」——pi 适配器按 D1 决策对 shared files 返回 `None`（其余 5 个适配器均会安装），因此这类文件本就不该落盘。
+- **影响面**：任何「所选适配器集合整体跳过某文件」的真实用户项目，与仓库清理无关。
+- **修复**：
+  - 该分支改为输出 `— <path> (not used by enabled tools)`（dimmed），新增 `not_applicable` 计数，汇总行显示 `N n/a`；真正的 legacy 检查仍由外层 `else`（`enabled_tools` 为空）承担。
+  - `run_with` 返回类型由 `Result<()>` 改为 `Result<StatusCounts>`，使计数可被断言（此前测试只能 `assert!(result.is_ok())`）。
+  - 强化 5 个既有 status 测试为精确计数断言；新增回归测试 `test_status_adapter_skipped_file_is_not_missing`。
+- **验收**：`36 managed files: 34 unchanged, 2 n/a.`，missing/✗ 出现 0 次；121 测试全绿；fmt + clippy `-D warnings` 通过。
+
 <!-- 后续日志按日期倒序追加在此处上方 -->
 
 ---
