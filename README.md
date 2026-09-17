@@ -17,6 +17,22 @@ A Rust rewrite of [praxis](https://github.com/DFilipeS/praxis) with extended sup
 
 ## Installation
 
+### Using mise (recommended)
+
+[mise](https://mise.jdx.dev/) is a polyglot tool version manager. If you're already using mise, this is the easiest way to install and keep pan-pipe up to date.
+
+```bash
+# Install pan-pipe globally
+mise use -g github:pan-pipe/pan-pipe@latest
+
+# Update to the latest version
+mise upgrade pan-pipe
+```
+
+**Supported platforms:**
+- Linux x86_64 (including WSL Ubuntu, Fedora)
+- Windows x86_64
+
 ### From crates.io (when published)
 
 ```bash
