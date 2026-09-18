@@ -1,7 +1,7 @@
 ---
 title: Distribute pan-pipe via mise using GitHub Releases
 date: 2025-09-17
-status: refined
+status: done
 tags: [distribution, mise, github-releases, cross-platform, github-actions]
 ---
 
