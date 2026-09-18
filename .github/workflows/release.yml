@@ -41,16 +41,12 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           tar -czf ../../../pan-pipe-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive_ext }} ${{ matrix.binary_name }}
-          cd ../../..
-          ls -lh pan-pipe-*.tar.gz
 
       - name: Package binary (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
           7z a ../../../pan-pipe-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive_ext }} ${{ matrix.binary_name }}
-          cd ../../..
-          ls -lh pan-pipe-*.zip
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
