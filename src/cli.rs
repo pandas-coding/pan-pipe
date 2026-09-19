@@ -19,6 +19,15 @@ pub enum Commands {
         /// Git ref (branch, tag, or commit) to fetch templates from
         #[arg(long)]
         r#ref: Option<String>,
+        /// Install for the given coding agent (repeatable; skips interactive tool selection)
+        #[arg(long = "tool", value_name = "TOOL")]
+        tools: Vec<String>,
+        /// Select all optional components without prompting
+        #[arg(long, conflicts_with = "no_components")]
+        all_components: bool,
+        /// Select no optional components without prompting
+        #[arg(long)]
+        no_components: bool,
     },
     /// Update installed components
     Update {

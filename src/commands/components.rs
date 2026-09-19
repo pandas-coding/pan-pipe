@@ -8,7 +8,7 @@ use crate::core::manifest::{
     write_manifest,
 };
 use crate::core::templates::fetch_templates;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use owo_colors::OwoColorize;
 use std::collections::HashMap;
 
@@ -77,7 +77,7 @@ pub async fn run() -> Result<()> {
     )
     .with_default(&initial_indices)
     .prompt()
-    .unwrap_or_default();
+    .map_err(|e| anyhow!("component selection failed: {}", e))?;
 
     let mut new_selection = crate::core::manifest::SelectedComponents {
         skills: vec![],

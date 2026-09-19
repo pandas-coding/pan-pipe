@@ -29,7 +29,12 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Init { r#ref } => commands::init::run(r#ref).await,
+        Commands::Init {
+            r#ref,
+            tools,
+            all_components,
+            no_components,
+        } => commands::init::run(r#ref, tools, all_components, no_components).await,
         Commands::Update { r#ref } => commands::update::run(r#ref).await,
         Commands::Components => commands::components::run().await,
         Commands::Status => commands::status::run().await,

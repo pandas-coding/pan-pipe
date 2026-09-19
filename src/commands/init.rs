@@ -2,14 +2,19 @@ use crate::adapters::{get_adapter, list_adapters, regenerate_tool_configs};
 use crate::core::components::{
     build_group_options, discover_optional_components, get_component_files, get_core_files,
 };
-use crate::core::files::{install_file, is_safe_path};
+use crate::core::files::is_safe_path;
 use crate::core::manifest::{FileEntry, Manifest, hash_content, read_manifest, write_manifest};
 use crate::core::templates::fetch_templates;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use owo_colors::OwoColorize;
 use std::collections::HashMap;
 
-pub async fn run(ref_: Option<String>) -> Result<()> {
+pub async fn run(
+    ref_: Option<String>,
+    tools: Vec<String>,
+    all_components: bool,
+    no_components: bool,
+) -> Result<()> {
     let project_root = std::env::current_dir()?;
     let resolved_root = project_root
         .canonicalize()
@@ -29,30 +34,56 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
     println!("Fetched {} template files", templates.len());
 
     // Tool selection
-    let all_adapters = list_adapters();
-    let adapter_options: Vec<String> = all_adapters
-        .iter()
-        .map(|(name, display)| format!("{} ({})", display, name))
-        .collect();
-
-    let selected_tools = if !adapter_options.is_empty() {
-        inquire::MultiSelect::new("Select tools to install for:", adapter_options.clone())
-            .prompt()
-            .unwrap_or_default()
+    let enabled_tools = if !tools.is_empty() {
+        let all_adapters = list_adapters();
+        let valid_names: Vec<&str> = all_adapters.iter().map(|(name, _)| *name).collect();
+        for name in &tools {
+            if !valid_names.contains(&name.as_str()) {
+                anyhow::bail!(
+                    "Unknown tool \"{}\". Available: {}",
+                    name,
+                    valid_names.join(", ")
+                );
+            }
+        }
+        tools
     } else {
-        vec![]
+        let all_adapters = list_adapters();
+        let adapter_options: Vec<String> = all_adapters
+            .iter()
+            .map(|(name, display)| format!("{} ({})", display, name))
+            .collect();
+
+        let selected_tools = if !adapter_options.is_empty() {
+            inquire::MultiSelect::new("Select tools to install for:", adapter_options.clone())
+                .prompt()
+                .map_err(|e| {
+                    anyhow!(
+                        "Tool selection failed: {}. For non-interactive use, pass one or more --tool flags (e.g. --tool pi-coding-agent)",
+                        e
+                    )
+                })?
+        } else {
+            vec![]
+        };
+
+        selected_tools
+            .iter()
+            .map(|s| {
+                s.split('(')
+                    .nth(1)
+                    .unwrap()
+                    .trim_end_matches(')')
+                    .to_string()
+            })
+            .collect()
     };
 
-    let enabled_tools: Vec<String> = selected_tools
-        .iter()
-        .map(|s| {
-            s.split('(')
-                .nth(1)
-                .unwrap()
-                .trim_end_matches(')')
-                .to_string()
-        })
-        .collect();
+    if enabled_tools.is_empty() {
+        anyhow::bail!(
+            "At least one tool must be selected. Skills and agents are installed into each coding agent's config directory (e.g. `.pi/skills/`). Press <space> to toggle, <enter> to confirm, or re-run non-interactively with `--tool <name>`."
+        );
+    }
 
     // Optional component selection
     let optional_components = discover_optional_components(&templates);
@@ -71,13 +102,24 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
             }
         }
 
-        let selected = inquire::MultiSelect::new(
-            "Select optional components to install:",
-            options_flat.clone(),
-        )
-        .with_default(&(0..options_flat.len()).collect::<Vec<_>>())
-        .prompt()
-        .unwrap_or_default();
+        let selected = if all_components {
+            options_flat.clone()
+        } else if no_components {
+            vec![]
+        } else {
+            inquire::MultiSelect::new(
+                "Select optional components to install:",
+                options_flat.clone(),
+            )
+            .with_default(&(0..options_flat.len()).collect::<Vec<_>>())
+            .prompt()
+            .map_err(|e| {
+                anyhow!(
+                    "Component selection failed: {}. For non-interactive use, pass --all-components or --no-components",
+                    e
+                )
+            })?
+        };
 
         for s in selected {
             let parts: Vec<_> = s.splitn(2, ": ").collect();
@@ -119,7 +161,7 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
 
     let mut manifest_files: HashMap<String, FileEntry> = HashMap::new();
     let mut installed = 0usize;
-    let mut skipped = 0usize;
+    let skipped = 0usize;
 
     for (relative_path, content) in files_to_install {
         if !relative_path.starts_with("praxis/") {
@@ -147,63 +189,16 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
             wrote = true;
         }
 
-        if !enabled_tools.is_empty() {
-            if wrote {
-                installed += 1;
-            }
-            manifest_files.insert(
-                relative_path.clone(),
-                FileEntry {
-                    hash: hash_content(&content),
-                    destinations,
-                },
-            );
-        } else {
-            let full_path = project_root.join(&relative_path);
-            if !is_safe_path(&resolved_root, &full_path) {
-                continue;
-            }
-            let mut prompter = crate::core::prompt::InquirePrompter;
-            match install_file(&full_path, &relative_path, &content, &mut prompter).await {
-                Ok(crate::core::files::InstallStatus::Written { hash }) => {
-                    manifest_files.insert(
-                        relative_path,
-                        FileEntry {
-                            hash,
-                            destinations: HashMap::new(),
-                        },
-                    );
-                    installed += 1;
-                }
-                Ok(crate::core::files::InstallStatus::Matched { hash }) => {
-                    manifest_files.insert(
-                        relative_path,
-                        FileEntry {
-                            hash,
-                            destinations: HashMap::new(),
-                        },
-                    );
-                    installed += 1;
-                }
-                Ok(crate::core::files::InstallStatus::Skipped { hash }) => {
-                    manifest_files.insert(
-                        relative_path,
-                        FileEntry {
-                            hash,
-                            destinations: HashMap::new(),
-                        },
-                    );
-                    skipped += 1;
-                }
-                Ok(crate::core::files::InstallStatus::Cancelled) => {
-                    println!("Cancelled.");
-                    return Ok(());
-                }
-                Err(e) => {
-                    eprintln!("Error installing {}: {}", relative_path, e);
-                }
-            }
+        if wrote {
+            installed += 1;
         }
+        manifest_files.insert(
+            relative_path.clone(),
+            FileEntry {
+                hash: hash_content(&content),
+                destinations,
+            },
+        );
     }
 
     // Create .ai-workflow directories
