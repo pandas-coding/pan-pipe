@@ -12,6 +12,21 @@ use owo_colors::OwoColorize;
 use similar::TextDiff;
 use std::collections::HashMap;
 
+/// Removes now-empty parent directories of `full_path`, walking up towards
+/// `resolved_root` but never removing `resolved_root` itself.
+async fn remove_empty_parents(full_path: &std::path::Path, resolved_root: &std::path::Path) {
+    let mut dir = full_path.parent().map(|p| p.to_path_buf());
+    while let Some(d) = dir {
+        if d == resolved_root || !d.starts_with(resolved_root) {
+            break;
+        }
+        if tokio::fs::remove_dir(&d).await.is_err() {
+            break; // not empty (or already gone) — stop walking up
+        }
+        dir = d.parent().map(|p| p.to_path_buf());
+    }
+}
+
 pub async fn run(ref_: Option<String>) -> Result<()> {
     let project_root = std::env::current_dir()?;
     let resolved_root = project_root
@@ -34,6 +49,15 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
     let selected_reviewer_names: std::collections::HashSet<_> =
         current_selection.reviewers.iter().cloned().collect();
 
+    let renames = crate::core::templates::detect_skill_renames(
+        manifest.files.keys().map(|s| s.as_str()),
+        &templates,
+    );
+    let rename_targets: std::collections::HashSet<&str> =
+        renames.iter().map(|(_, new)| new.as_str()).collect();
+    let rename_sources: std::collections::HashSet<&str> =
+        renames.iter().map(|(old, _)| old.as_str()).collect();
+
     let mut new_files = Vec::new();
     let mut removed_files = Vec::new();
     let mut changed_files = Vec::new();
@@ -43,6 +67,9 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
         let new_hash = hash_content(content);
         match manifest.files.get(relative_path) {
             None => {
+                if rename_targets.contains(relative_path.as_str()) {
+                    continue;
+                }
                 if let Some((ty, name)) = get_component_for_file(relative_path) {
                     let is_selected = match ty {
                         crate::core::components::ComponentType::Skill => {
@@ -80,12 +107,19 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
     }
 
     for relative_path in manifest.files.keys() {
+        if rename_sources.contains(relative_path.as_str()) {
+            continue;
+        }
         if !templates.contains_key(relative_path) {
             removed_files.push(relative_path.clone());
         }
     }
 
-    if new_files.is_empty() && changed_files.is_empty() && removed_files.is_empty() {
+    if new_files.is_empty()
+        && changed_files.is_empty()
+        && removed_files.is_empty()
+        && renames.is_empty()
+    {
         if !new_unselected_components.is_empty() {
             println!(
                 "{} new optional component(s) available. Run `pan-pipe components` to review.",
@@ -108,11 +142,15 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
     if !removed_files.is_empty() {
         println!("{} file(s) removed", removed_files.len().to_string().red());
     }
+    if !renames.is_empty() {
+        println!("{} file(s) renamed", renames.len().to_string().cyan());
+    }
 
     let mut updated_manifest_files = manifest.files.clone();
     let mut added = 0usize;
     let mut updated = 0usize;
     let mut removed = 0usize;
+    let mut renamed = 0usize;
     let mut skipped = 0usize;
     let mut manifest_dirty = false;
     let enabled_tools = manifest.enabled_tools.clone();
@@ -159,6 +197,99 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
             );
             added += 1;
             println!("{} {}", "added".green(), relative_path);
+        }
+    }
+
+    // Handle renamed files (px-* → pp-*)
+    for (old_key, new_key) in &renames {
+        let Some(content) = templates.get(new_key) else {
+            continue;
+        };
+        let new_hash = hash_content(content);
+        let entry = manifest.files.get(old_key).cloned().unwrap_or_default();
+
+        if !enabled_tools.is_empty() {
+            // Remove old destination files (all tools recorded in the manifest entry).
+            for old_dest in entry.destinations.values() {
+                let full_dest = project_root.join(old_dest);
+                if !is_safe_path(&resolved_root, &full_dest) || !full_dest.exists() {
+                    continue;
+                }
+                if is_destination_modified(&project_root, old_dest, &entry.hash).await {
+                    println!(
+                        "{} {} {}",
+                        "kept".dimmed(),
+                        old_dest,
+                        "(locally modified)".yellow()
+                    );
+                    continue;
+                }
+                let _ = tokio::fs::remove_file(&full_dest).await;
+                remove_empty_parents(&full_dest, &resolved_root).await;
+            }
+            // Install the renamed file for every enabled tool.
+            let mut new_destinations = HashMap::new();
+            for tool_name in &enabled_tools {
+                let Some(adapter) = get_adapter(tool_name) else {
+                    continue;
+                };
+                let Some(dest_path) = adapter.destination_path(new_key) else {
+                    continue;
+                };
+                let full_path = project_root.join(&dest_path);
+                if !is_safe_path(&resolved_root, &full_path) {
+                    continue;
+                }
+                if let Some(parent) = full_path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                tokio::fs::write(&full_path, content).await?;
+                new_destinations.insert(tool_name.clone(), dest_path.to_string_lossy().to_string());
+            }
+            updated_manifest_files.remove(old_key);
+            updated_manifest_files.insert(
+                new_key.clone(),
+                FileEntry {
+                    hash: new_hash,
+                    destinations: new_destinations,
+                },
+            );
+            renamed += 1;
+            println!("{} {} → {}", "renamed".cyan(), old_key, new_key);
+        } else {
+            // Legacy manifest without tool destinations: move files under praxis/.
+            let old_full = project_root.join(old_key);
+            let old_existed_and_modified = old_full.exists()
+                && is_safe_path(&resolved_root, &old_full)
+                && is_locally_modified(&project_root, old_key, &manifest).await;
+            if old_existed_and_modified {
+                println!(
+                    "{} {} {}",
+                    "kept".dimmed(),
+                    old_key,
+                    "(locally modified)".yellow()
+                );
+            } else if old_full.exists() && is_safe_path(&resolved_root, &old_full) {
+                let _ = tokio::fs::remove_file(&old_full).await;
+                remove_empty_parents(&old_full, &resolved_root).await;
+            }
+            let new_full = project_root.join(new_key);
+            if is_safe_path(&resolved_root, &new_full) {
+                if let Some(parent) = new_full.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                tokio::fs::write(&new_full, content).await?;
+                updated_manifest_files.remove(old_key);
+                updated_manifest_files.insert(
+                    new_key.clone(),
+                    FileEntry {
+                        hash: new_hash,
+                        destinations: HashMap::new(),
+                    },
+                );
+                renamed += 1;
+                println!("{} {} → {}", "renamed".cyan(), old_key, new_key);
+            }
         }
     }
 
@@ -476,6 +607,7 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
     let needs_write = added > 0
         || updated > 0
         || removed > 0
+        || renamed > 0
         || manifest_dirty
         || manifest.selected_components.is_none();
     let updated_manifest = Manifest {
@@ -519,6 +651,9 @@ pub async fn run(ref_: Option<String>) -> Result<()> {
     }
     if removed > 0 {
         parts.push(format!("{} removed", removed.to_string().red()));
+    }
+    if renamed > 0 {
+        parts.push(format!("{} renamed", renamed.to_string().cyan()));
     }
     if skipped > 0 {
         parts.push(format!("{} skipped", skipped.to_string().dimmed()));
