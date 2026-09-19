@@ -15,6 +15,8 @@ A Rust rewrite of [praxis](https://github.com/DFilipeS/praxis) with extended sup
 | **pi-coding-agent** | `.pi/skills/` | `.pi/prompts/` | — |
 | **codex** | `.codex/skills/` | `.codex/agents/` | `.codex/config.toml` |
 
+The five core workflow skills are installed under the `pp-` prefix (`pp-brainstorm`, `pp-plan`, `pp-implement`, `pp-review`, `pp-retrospect`) into each agent's skills directory. The `px-*` names are the upstream template names which pan-pipe renames automatically on install.
+
 ## Installation
 
 ### Using mise (recommended)
@@ -55,11 +57,19 @@ Download from the [Releases](https://github.com/pan-pipe/pan-pipe/releases) page
 
 ### Initialize
 
+Interactive mode (select tools and components with prompts):
+
 ```bash
 pan-pipe init
 ```
 
-Select the tools you want to install for and optional components.
+Non-interactive mode:
+
+```bash
+pan-pipe init --tool <tool> [--tool <tool> ...] [--all-components | --no-components]
+```
+
+Valid tool names: `amp-code`, `claude-code`, `codex`, `cursor`, `opencode`, `pi-coding-agent`. At least one `--tool` is required (skills are installed into each tool's config directory). `--all-components` selects every optional component; `--no-components` selects none. Use `--ref <git-ref>` alongside either mode to pin a specific template version.
 
 ### Update
 
@@ -121,7 +131,7 @@ pan-pipe uses the same `.praxis-manifest.json` format. Simply run:
 pan-pipe update
 ```
 
-in a project that was initialized with the JS version.
+in a project that was initialized with the JS version. Existing installs with legacy `px-*` skills are migrated to `pp-*` automatically by `pan-pipe update`.
 
 ## License
 

@@ -49,8 +49,8 @@ mod tests {
     fn test_destination_path_skills() {
         let a = PiCodingAgent;
         assert_eq!(
-            a.destination_path("praxis/skills/px-brainstorm/SKILL.md"),
-            Some(PathBuf::from(".pi/skills/px-brainstorm/SKILL.md"))
+            a.destination_path("praxis/skills/pp-brainstorm/SKILL.md"),
+            Some(PathBuf::from(".pi/skills/pp-brainstorm/SKILL.md"))
         );
         assert_eq!(
             a.destination_path("praxis/skills/agent-browser/references/commands.md"),
@@ -103,7 +103,7 @@ mod tests {
     fn test_managed_files() {
         let a = PiCodingAgent;
         let sources = vec![
-            "praxis/skills/px-brainstorm/SKILL.md".to_string(),
+            "praxis/skills/pp-brainstorm/SKILL.md".to_string(),
             "praxis/agents/reviewers/security.md".to_string(),
             "praxis/conventions.md".to_string(),
         ];
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(
             managed,
             vec![
-                PathBuf::from(".pi/skills/px-brainstorm/SKILL.md"),
+                PathBuf::from(".pi/skills/pp-brainstorm/SKILL.md"),
                 PathBuf::from(".pi/prompts/reviewer-security.md"),
             ]
         );

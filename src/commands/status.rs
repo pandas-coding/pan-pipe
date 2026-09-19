@@ -340,10 +340,10 @@ mod tests {
     async fn test_status_adapter_skipped_file_is_not_missing() {
         let tmp = TempDir::new().unwrap();
         let content = "# Plan";
-        tokio::fs::create_dir_all(tmp.path().join(".pi/skills/px-plan"))
+        tokio::fs::create_dir_all(tmp.path().join(".pi/skills/pp-plan"))
             .await
             .unwrap();
-        tokio::fs::write(tmp.path().join(".pi/skills/px-plan/SKILL.md"), content)
+        tokio::fs::write(tmp.path().join(".pi/skills/pp-plan/SKILL.md"), content)
             .await
             .unwrap();
 
@@ -351,14 +351,14 @@ mod tests {
             let mut m = HashMap::new();
             // Installed for pi.
             m.insert(
-                "praxis/skills/px-plan/SKILL.md".to_string(),
+                "praxis/skills/pp-plan/SKILL.md".to_string(),
                 FileEntry {
                     hash: hash_content(content),
                     destinations: {
                         let mut d = HashMap::new();
                         d.insert(
                             "pi-coding-agent".to_string(),
-                            ".pi/skills/px-plan/SKILL.md".to_string(),
+                            ".pi/skills/pp-plan/SKILL.md".to_string(),
                         );
                         d
                     },

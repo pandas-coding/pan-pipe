@@ -81,8 +81,8 @@ mod tests {
             Some(PathBuf::from(".codex/conventions.md"))
         );
         assert_eq!(
-            a.destination_path("praxis/skills/px-brainstorm/SKILL.md"),
-            Some(PathBuf::from(".codex/skills/px-brainstorm/SKILL.md"))
+            a.destination_path("praxis/skills/pp-brainstorm/SKILL.md"),
+            Some(PathBuf::from(".codex/skills/pp-brainstorm/SKILL.md"))
         );
         assert_eq!(
             a.destination_path("praxis/agents/reviewers/security.md"),

@@ -39,8 +39,8 @@ mod tests {
             Some(PathBuf::from(".agents/conventions.md"))
         );
         assert_eq!(
-            a.destination_path("praxis/skills/px-brainstorm/SKILL.md"),
-            Some(PathBuf::from(".agents/skills/px-brainstorm/SKILL.md"))
+            a.destination_path("praxis/skills/pp-brainstorm/SKILL.md"),
+            Some(PathBuf::from(".agents/skills/pp-brainstorm/SKILL.md"))
         );
         assert_eq!(
             a.destination_path("praxis/agents/reviewers/security.md"),
@@ -65,14 +65,14 @@ mod tests {
         let sources = vec![
             "praxis/conventions.md".to_string(),
             "README.md".to_string(),
-            "praxis/skills/px-brainstorm/SKILL.md".to_string(),
+            "praxis/skills/pp-brainstorm/SKILL.md".to_string(),
         ];
         let managed = a.managed_files(&sources);
         assert_eq!(
             managed,
             vec![
                 PathBuf::from(".agents/conventions.md"),
-                PathBuf::from(".agents/skills/px-brainstorm/SKILL.md"),
+                PathBuf::from(".agents/skills/pp-brainstorm/SKILL.md"),
             ]
         );
     }
