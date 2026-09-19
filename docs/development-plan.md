@@ -315,6 +315,32 @@ pub trait Adapter {
   - 强化 5 个既有 status 测试为精确计数断言；新增回归测试 `test_status_adapter_skipped_file_is_not_missing`。
 - **验收**：`36 managed files: 34 unchanged, 2 n/a.`，missing/✗ 出现 0 次；121 测试全绿；fmt + clippy `-D warnings` 通过。
 
+#### 2026-09-19 — 技能前缀 px- → pp- 重命名 & init 非交互修复
+
+**背景**：上游 praxis 模板将技能目录由 `px-` 前缀改为 `pp-`（pan-pipe 自有 fork 惯例），需要在加载层完成改名而非修改上游；同时修复 `pan-pipe init` 在非 TTY 环境下静默落盘到 `praxis/` 的 bug。
+
+**变更一：init 非交互修复（提交 3e0cf76）**
+- **根因**：`inquire::MultiSelect::prompt().unwrap_or_default()` 在非 TTY 或用户未选择时静默返回空集，落入「无工具」兼容分支，把 36 个模板写进 CWD 的 `praxis/` 目录。
+- **修复**：删除该兼容分支；工具选择失败改为报错并提示 `--tool` 用法；零工具选择直接 bail；新增 `--tool <TOOL>`（可重复）、`--all-components`、`--no-components` 三个非交互参数（`cli.rs`/`main.rs`/`init.rs`）；顺带把 `components.rs` 中同类 `unwrap_or_default()` 换成显式报错，避免 Ctrl-C 时误删全部组件。
+- **验收**：`printf '\n\n' | pan-pipe init` 现在输出 `Error: Tool selection failed: The input device is not a TTY...` 且零文件写入；`pan-pipe init --tool pi-coding-agent --all-components` 在临时目录正确安装 34 个文件到 `.pi/skills/` 等目录。
+
+**变更二：模板加载时改名 px- → pp-（提交 9804593）**
+- `src/core/templates.rs`：新增 `apply_skill_prefix_rename`（在 `fetch_templates` 内对 `extract_templates` 结果应用）：路径 `praxis/skills/px-<name>/...` → `pp-<name>/...`；内容里所有实际存在的旧目录名（`px-<name>`）替换为 `pp-<name>`，覆盖 frontmatter `name:` 与跨技能引用（如 px-implement 提到 px-review）；纯 `praxis/skills/px-foo`（无子路径）不动。新增 `renamed_skill_source`、`detect_skill_renames` 两个公共 API 供 update 迁移使用。
+- `src/core/components.rs`：`CORE_SKILLS` 白名单换为 `pp-*`；新增断言：旧 `px-` 路径现在被归类为可选组件。
+- 决策：内容替换仅用「实际被改名的目录名」集合，避免误伤无关的 `px-` 字符串。
+
+**变更三：update 自动迁移旧 px- 安装（提交 f8a2e37）**
+- `src/commands/update.rs`：`fetch_templates` 后用 `detect_skill_renames` 计算（旧键→新键）对；新文件循环跳过改名目标、删除文件循环跳过改名源；「Everything is up to date」早返回需改名列表为空；新增「Handle renamed files」段——有工具模式：按 manifest 记录的旧 destinations 删除（本地已修改则 kept 跳过）→ 按适配器安装新路径 → manifest 键/哈希/destinations 换新，`remove_empty_parents` 顺带清理空目录；legacy 无工具模式同理在 `praxis/` 下搬移；`needs_write` 与汇总行接入 `N renamed` 计数。
+- **验收（E2E）**：构造含 px- 键的旧 manifest + 磁盘 px- 文件 → `pan-pipe update` 输出 `1 file(s) renamed`、`23 added, 1 renamed`，旧文件删除、空目录清理、新 pp- 文件就位、manifest 键替换且 destinations 指向 pp- 路径。
+
+**变更四：文档与自身迁移（提交 bce81d9 / 347357d）**
+- README 补充 pp- 前缀说明、非交互 init 用法、迁移说明；5 个适配器/命令测试夹具 px-→pp-。
+- 在本仓库自身运行 `pan-pipe update`：8 个 `px-*` 文件（brainstorm/plan/implement/review/retrospect 含 reference）全部改名，`status` 显示 34 unchanged + 2 n/a，磁盘与 manifest 均无 px- 残留；git 识别为 rename（相似度 99%）。
+
+**执行方式备注**：init/文档/update 三块由子 agent 在隔离 worktree 中并行完成；核心层任务因子 agent 连续三次流中断（Stream ended without finish_reason，零产出），改由主会话直接实现，其余照常。
+
+- 累计 127 个单元测试通过；`cargo fmt` + `cargo clippy --all-targets --all-features -D warnings` 全绿。
+
 <!-- 后续日志按日期倒序追加在此处上方 -->
 
 ---
