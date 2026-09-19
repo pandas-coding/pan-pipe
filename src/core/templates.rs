@@ -2,12 +2,17 @@
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use tar::Archive;
 
 const TARBALL_BASE_URL: &str = "https://api.github.com/repos/DFilipeS/praxis/tarball";
 const MAX_DOWNLOAD_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+
+/// Legacy skill prefix used by the upstream praxis templates.
+const LEGACY_SKILL_PREFIX: &str = "px-";
+/// Skill prefix used for pan-pipe installs.
+const SKILL_PREFIX: &str = "pp-";
 
 pub async fn fetch_templates(ref_: Option<&str>) -> Result<BTreeMap<String, String>> {
     let ref_ = ref_.unwrap_or("main");
@@ -58,7 +63,8 @@ pub async fn fetch_templates(ref_: Option<&str>) -> Result<BTreeMap<String, Stri
         );
     }
 
-    extract_templates(&bytes)
+    let templates = extract_templates(&bytes)?;
+    Ok(apply_skill_prefix_rename(templates))
 }
 
 pub fn extract_templates(bytes: &[u8]) -> Result<BTreeMap<String, String>> {
@@ -93,6 +99,101 @@ pub fn extract_templates(bytes: &[u8]) -> Result<BTreeMap<String, String>> {
     }
 
     Ok(files)
+}
+
+/// Returns the legacy skill directory name (`px-<name>`) when `path` is a
+/// file inside one, e.g. `praxis/skills/px-brainstorm/SKILL.md` →
+/// `Some("px-brainstorm")`. A file sitting directly at `praxis/skills/px-foo`
+/// (no trailing slash) is not a skill directory and yields `None`.
+fn legacy_skill_dir(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("praxis/skills/")?;
+    let seg = rest.split('/').next()?;
+    if seg.starts_with(LEGACY_SKILL_PREFIX) && rest.len() > seg.len() {
+        Some(seg.to_string())
+    } else {
+        None
+    }
+}
+
+fn renamed_skill_segment(legacy_name: &str) -> String {
+    format!(
+        "{}{}",
+        SKILL_PREFIX,
+        &legacy_name[LEGACY_SKILL_PREFIX.len()..]
+    )
+}
+
+/// Rewrites upstream `praxis/skills/px-<name>/...` template paths to
+/// `pp-<name>` and replaces `px-<name>` references inside every template
+/// content (frontmatter `name:` fields and cross-skill references) so the
+/// installed files are self-consistent under the `pp-` prefix. Returns the
+/// input unchanged when the templates contain no legacy `px-` skill dirs.
+pub fn apply_skill_prefix_rename(templates: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let legacy_names: BTreeSet<String> = templates
+        .keys()
+        .filter_map(|k| legacy_skill_dir(k))
+        .collect();
+    if legacy_names.is_empty() {
+        return templates;
+    }
+
+    if crate::is_verbose() {
+        eprintln!(
+            "[verbose] renamed {} legacy px-* skill path(s) to pp-*",
+            legacy_names.len()
+        );
+    }
+
+    let mut out = BTreeMap::new();
+    for (path, content) in templates {
+        let new_path = match legacy_skill_dir(&path) {
+            Some(legacy) => {
+                let rest = path.strip_prefix("praxis/skills/").unwrap_or_default();
+                let after = &rest[legacy.len()..];
+                format!("praxis/skills/{}{}", renamed_skill_segment(&legacy), after)
+            }
+            None => path,
+        };
+
+        let mut new_content = content;
+        for legacy in &legacy_names {
+            if new_content.contains(legacy.as_str()) {
+                new_content = new_content.replace(legacy.as_str(), &renamed_skill_segment(legacy));
+            }
+        }
+        out.insert(new_path, new_content);
+    }
+    out
+}
+
+/// Maps a legacy skill source path (`praxis/skills/px-<name>/<rest>`) to its
+/// `pp-` counterpart. Returns `None` for any other path shape.
+pub fn renamed_skill_source(source: &str) -> Option<String> {
+    let legacy = legacy_skill_dir(source)?;
+    let rest = source.strip_prefix("praxis/skills/")?;
+    Some(format!(
+        "praxis/skills/{}{}",
+        renamed_skill_segment(&legacy),
+        &rest[legacy.len()..]
+    ))
+}
+
+/// Pairs every manifest file key with its renamed `pp-` counterpart, but only
+/// when that counterpart exists in the current templates. The result is
+/// sorted by the old key so callers get deterministic output.
+pub fn detect_skill_renames<'a>(
+    manifest_keys: impl IntoIterator<Item = &'a str>,
+    templates: &BTreeMap<String, String>,
+) -> Vec<(String, String)> {
+    let mut renames: Vec<(String, String)> = manifest_keys
+        .into_iter()
+        .filter_map(|old| {
+            let new = renamed_skill_source(old)?;
+            templates.contains_key(&new).then(|| (old.to_string(), new))
+        })
+        .collect();
+    renames.sort();
+    renames
 }
 
 #[cfg(test)]
@@ -151,5 +252,150 @@ mod tests {
         let tarball = make_tarball(&[]);
         let files = extract_templates(&tarball).unwrap();
         assert!(files.is_empty());
+    }
+
+    fn make_templates(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn test_apply_skill_prefix_rename_paths_and_content() {
+        let templates = make_templates(&[
+            (
+                "praxis/skills/px-brainstorm/SKILL.md",
+                "---\nname: px-brainstorm\ndescription: \"Mentions px-plan\"\n---\n",
+            ),
+            (
+                "praxis/skills/px-plan/SKILL.md",
+                "---\nname: px-plan\n---\nAfter px-brainstorm.\n",
+            ),
+            (
+                "praxis/skills/px-implement/SKILL.md",
+                "---\nname: px-implement\n---\nAlways hand off to px-review when done.\n",
+            ),
+            (
+                "praxis/skills/px-review/SKILL.md",
+                "---\nname: px-review\n---\n",
+            ),
+            (
+                "praxis/skills/agent-browser/SKILL.md",
+                "---\nname: agent-browser\n---\nNo legacy references here.\n",
+            ),
+            (
+                "praxis/agents/codebase-explorer.md",
+                "Use the px-brainstorm skill before planning.\n",
+            ),
+            (
+                "praxis/conventions.md",
+                "Workflow: px-plan → px-implement.\n",
+            ),
+        ]);
+
+        let renamed = apply_skill_prefix_rename(templates);
+
+        // Paths renamed only for px- skill dirs.
+        assert!(renamed.contains_key("praxis/skills/pp-brainstorm/SKILL.md"));
+        assert!(renamed.contains_key("praxis/skills/pp-implement/SKILL.md"));
+        assert!(renamed.contains_key("praxis/skills/agent-browser/SKILL.md"));
+        assert!(!renamed.contains_key("praxis/skills/px-brainstorm/SKILL.md"));
+
+        // Content rewritten in skill files and in other files referencing them.
+        assert!(renamed["praxis/skills/pp-brainstorm/SKILL.md"].contains("name: pp-brainstorm"));
+        assert!(renamed["praxis/skills/pp-brainstorm/SKILL.md"].contains("pp-plan"));
+        assert!(renamed["praxis/skills/pp-implement/SKILL.md"].contains("pp-review"));
+        assert!(renamed["praxis/skills/agent-browser/SKILL.md"].contains("agent-browser"));
+        assert!(renamed["praxis/agents/codebase-explorer.md"].contains("pp-brainstorm"));
+        assert!(renamed["praxis/conventions.md"].contains("pp-plan → pp-implement"));
+    }
+
+    #[test]
+    fn test_apply_skill_prefix_rename_noop_without_px_skills() {
+        let templates = make_templates(&[
+            ("praxis/conventions.md", "conventions"),
+            (
+                "praxis/skills/agent-browser/SKILL.md",
+                "---\nname: agent-browser\n---",
+            ),
+        ]);
+        let renamed = apply_skill_prefix_rename(templates.clone());
+        assert_eq!(renamed, templates);
+    }
+
+    #[test]
+    fn test_apply_skill_prefix_rename_leaves_bare_px_file_untouched() {
+        let templates = make_templates(&[("praxis/skills/px-foo", "not a skill directory")]);
+        let renamed = apply_skill_prefix_rename(templates);
+        assert!(renamed.contains_key("praxis/skills/px-foo"));
+        assert_eq!(renamed["praxis/skills/px-foo"], "not a skill directory");
+    }
+
+    #[test]
+    fn test_renamed_skill_source() {
+        assert_eq!(
+            renamed_skill_source("praxis/skills/px-brainstorm/SKILL.md").as_deref(),
+            Some("praxis/skills/pp-brainstorm/SKILL.md")
+        );
+        assert_eq!(
+            renamed_skill_source("praxis/skills/px-plan/reference/template.md").as_deref(),
+            Some("praxis/skills/pp-plan/reference/template.md")
+        );
+        // Non-skill / non-legacy / bare-dir shapes.
+        assert_eq!(renamed_skill_source("praxis/conventions.md"), None);
+        assert_eq!(
+            renamed_skill_source("praxis/skills/agent-browser/SKILL.md"),
+            None
+        );
+        assert_eq!(renamed_skill_source("praxis/skills/px-foo"), None);
+        assert_eq!(renamed_skill_source("praxis/skills/pp-plan/SKILL.md"), None);
+    }
+
+    #[test]
+    fn test_detect_skill_renames() {
+        let templates = make_templates(&[
+            ("praxis/skills/pp-brainstorm/SKILL.md", "content"),
+            ("praxis/skills/pp-plan/SKILL.md", "content"),
+            ("praxis/conventions.md", "content"),
+        ]);
+        let manifest_keys = [
+            "praxis/conventions.md",
+            "praxis/skills/px-plan/SKILL.md",
+            "praxis/skills/px-review/SKILL.md", // pp- counterpart missing
+        ];
+        let renames = detect_skill_renames(manifest_keys, &templates);
+        assert_eq!(
+            renames,
+            vec![(
+                "praxis/skills/px-plan/SKILL.md".to_string(),
+                "praxis/skills/pp-plan/SKILL.md".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn test_detect_skill_renames_sorted_and_empty() {
+        let templates = make_templates(&[
+            ("praxis/skills/pp-brainstorm/SKILL.md", "content"),
+            ("praxis/skills/pp-plan/SKILL.md", "content"),
+            ("praxis/skills/pp-review/SKILL.md", "content"),
+        ]);
+        let manifest_keys = [
+            "praxis/skills/px-review/SKILL.md",
+            "praxis/skills/px-plan/SKILL.md",
+            "praxis/skills/px-brainstorm/SKILL.md",
+        ];
+        let renames = detect_skill_renames(manifest_keys, &templates);
+        let olds: Vec<&str> = renames.iter().map(|(o, _)| o.as_str()).collect();
+        assert_eq!(
+            olds,
+            vec![
+                "praxis/skills/px-brainstorm/SKILL.md",
+                "praxis/skills/px-plan/SKILL.md",
+                "praxis/skills/px-review/SKILL.md"
+            ]
+        );
+        assert!(detect_skill_renames([], &templates).is_empty());
     }
 }

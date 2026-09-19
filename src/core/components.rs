@@ -3,11 +3,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 const CORE_SKILLS: &[&str] = &[
-    "px-brainstorm",
-    "px-plan",
-    "px-implement",
-    "px-review",
-    "px-retrospect",
+    "pp-brainstorm",
+    "pp-plan",
+    "pp-implement",
+    "pp-review",
+    "pp-retrospect",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -233,11 +233,19 @@ mod tests {
 
     #[test]
     fn test_get_component_for_file_core_skills() {
-        assert!(get_component_for_file("praxis/skills/px-brainstorm/SKILL.md").is_none());
-        assert!(get_component_for_file("praxis/skills/px-plan/SKILL.md").is_none());
-        assert!(get_component_for_file("praxis/skills/px-implement/SKILL.md").is_none());
-        assert!(get_component_for_file("praxis/skills/px-review/SKILL.md").is_none());
-        assert!(get_component_for_file("praxis/skills/px-retrospect/SKILL.md").is_none());
+        assert!(get_component_for_file("praxis/skills/pp-brainstorm/SKILL.md").is_none());
+        assert!(get_component_for_file("praxis/skills/pp-plan/SKILL.md").is_none());
+        assert!(get_component_for_file("praxis/skills/pp-implement/SKILL.md").is_none());
+        assert!(get_component_for_file("praxis/skills/pp-review/SKILL.md").is_none());
+        assert!(get_component_for_file("praxis/skills/pp-retrospect/SKILL.md").is_none());
+        // Legacy px- names are no longer in the core whitelist: upstream paths
+        // are renamed to pp- at load time, and stale manifest keys are handled
+        // by the update migration. A px- path is therefore classified as an
+        // optional component.
+        assert_eq!(
+            get_component_for_file("praxis/skills/px-brainstorm/SKILL.md"),
+            Some((ComponentType::Skill, "px-brainstorm".to_string()))
+        );
     }
 
     #[test]
@@ -290,7 +298,7 @@ mod tests {
             ("praxis/conventions.md", "conventions"),
             ("praxis/reviewer-output-format.md", "format"),
             ("praxis/agents/codebase-explorer.md", "explorer"),
-            ("praxis/skills/px-brainstorm/SKILL.md", "brainstorm"),
+            ("praxis/skills/pp-brainstorm/SKILL.md", "brainstorm"),
             ("praxis/skills/agent-browser/SKILL.md", "browser"),
             ("praxis/agents/reviewers/security.md", "security"),
         ]);
@@ -298,7 +306,7 @@ mod tests {
         assert!(core.contains_key("praxis/conventions.md"));
         assert!(core.contains_key("praxis/reviewer-output-format.md"));
         assert!(core.contains_key("praxis/agents/codebase-explorer.md"));
-        assert!(core.contains_key("praxis/skills/px-brainstorm/SKILL.md"));
+        assert!(core.contains_key("praxis/skills/pp-brainstorm/SKILL.md"));
         assert!(!core.contains_key("praxis/skills/agent-browser/SKILL.md"));
         assert!(!core.contains_key("praxis/agents/reviewers/security.md"));
     }
@@ -360,7 +368,7 @@ mod tests {
         let templates = make_templates(&[
             ("praxis/conventions.md", "core"),
             (
-                "praxis/skills/px-brainstorm/SKILL.md",
+                "praxis/skills/pp-brainstorm/SKILL.md",
                 "---\ndescription: Brainstorm\n---",
             ),
             (
@@ -386,7 +394,7 @@ mod tests {
         ]);
         let components = discover_optional_components(&templates);
         let names: Vec<_> = components.iter().map(|c| c.name.as_str()).collect();
-        assert!(!names.contains(&"px-brainstorm"));
+        assert!(!names.contains(&"pp-brainstorm"));
         assert!(names.contains(&"agent-browser"));
         assert!(names.contains(&"figma-to-code"));
         assert!(names.contains(&"security"));
@@ -438,7 +446,7 @@ mod tests {
     fn test_discover_optional_components_empty() {
         let templates = make_templates(&[
             ("praxis/conventions.md", "core"),
-            ("praxis/skills/px-brainstorm/SKILL.md", "core skill"),
+            ("praxis/skills/pp-brainstorm/SKILL.md", "core skill"),
         ]);
         assert!(discover_optional_components(&templates).is_empty());
     }
@@ -524,12 +532,12 @@ mod tests {
                 "praxis/agents/reviewers/security.md",
                 "---\ndescription: Security\n---",
             ),
-            ("praxis/skills/px-brainstorm/SKILL.md", "core"),
+            ("praxis/skills/pp-brainstorm/SKILL.md", "core"),
             ("praxis/conventions.md", "core"),
         ]);
         let result = get_selected_components(None, &templates);
         assert!(result.skills.contains(&"agent-browser".to_string()));
-        assert!(!result.skills.contains(&"px-brainstorm".to_string()));
+        assert!(!result.skills.contains(&"pp-brainstorm".to_string()));
         assert!(result.reviewers.contains(&"security".to_string()));
     }
 
